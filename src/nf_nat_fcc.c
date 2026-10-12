@@ -56,7 +56,7 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("FCC NAT helper");
 MODULE_ALIAS_NF_NAT_HELPER("fcc");
-MODULE_VERSION("r9");
+MODULE_VERSION("r10");
 
 static struct nf_conntrack_nat_helper fcc_nat_helper =
 	NF_CT_NAT_HELPER_INIT("fcc");
@@ -220,6 +220,7 @@ static u16 fcc_expect_media(struct nf_conn *ct,
 			    struct nf_conntrack_expect **exp_out)
 {
 	struct nf_conntrack_expect *exp;
+	struct nf_conntrack_tuple tuple;
 	unsigned int tries;
 	u16 port;
 
@@ -251,7 +252,13 @@ static u16 fcc_expect_media(struct nf_conn *ct,
 		exp->dir = IP_CT_DIR_REPLY;
 		exp->expectfn = fcc_expect_translate;
 
-		exp->tuple.dst.u.udp.port = htons(port);
+		/* Keep a private copy of the tuple: on -EBUSY the
+		 * expectation object is freed below and the takeover
+		 * lookup still needs it. */
+		tuple = exp->tuple;
+		tuple.dst.u.udp.port = htons(port);
+		exp->tuple = tuple;
+
 		ret = nf_ct_expect_related(exp, 0);
 		if (ret == 0) {
 			FCC_DBG("media expectation created on port %u\n", port);
@@ -268,7 +275,7 @@ static u16 fcc_expect_media(struct nf_conn *ct,
 		/* Port held by this client's earlier redirect hop: take
 		 * the port over with a fresh expectation whose master is
 		 * this hop, keeping the advertised port unchanged. */
-		if (!fcc_claim_client_port(ct, &exp->tuple)) {
+		if (!fcc_claim_client_port(ct, &tuple)) {
 			FCC_DBG("port %u held by another client, bumping\n",
 				port);
 			continue;
@@ -283,7 +290,7 @@ static u16 fcc_expect_media(struct nf_conn *ct,
 		exp->saved_proto.udp.port = lan_media_port;
 		exp->dir = IP_CT_DIR_REPLY;
 		exp->expectfn = fcc_expect_translate;
-		exp->tuple.dst.u.udp.port = htons(port);
+		exp->tuple = tuple;
 		ret = nf_ct_expect_related(exp, 0);
 		if (ret == 0) {
 			FCC_DBG("media expectation taken over on port %u\n",
@@ -493,7 +500,7 @@ static int __init nf_nat_fcc_init(void)
 		return ret;
 	}
 
-	pr_info("FCC NAT helper r9 (dst-only translate) registered\n");
+	pr_info("FCC NAT helper r10 (dst-only translate) registered\n");
 	return 0;
 }
 

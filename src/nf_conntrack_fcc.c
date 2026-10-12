@@ -40,7 +40,7 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("FCC (Fast Channel Change) connection tracking helper");
 MODULE_ALIAS_NFCT_HELPER("fcc");
-MODULE_VERSION("r9");
+MODULE_VERSION("r10");
 
 static unsigned short port __read_mostly = 8027;
 module_param(port, ushort, 0444);
@@ -82,6 +82,7 @@ static int __init nf_conntrack_fcc_init(void)
 		return -EINVAL;
 	}
 
+	/* 6.18.54 nf_ct_helper_init() returns void */
 	nf_ct_helper_init(&fcc_helper, NFPROTO_IPV4, IPPROTO_UDP,
 			  "fcc", 8027, port, 0,
 			  &fcc_exp_policy, 0, fcc_help, NULL, THIS_MODULE);
@@ -92,7 +93,7 @@ static int __init nf_conntrack_fcc_init(void)
 		return ret;
 	}
 
-	pr_info("FCC conntrack helper r9: UDP port %u (helper name \"%s\")\n",
+	pr_info("FCC conntrack helper r10: UDP port %u (helper name \"%s\")\n",
 		port, fcc_helper.name);
 
 	return 0;

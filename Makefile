@@ -1,9 +1,7 @@
 #
 # Copyright (C) 2026 ming
 #
-# OpenWrt/ImmortalWrt package for the FCC netfilter NAT helper.
-# Single kmod package, modeled after the classic kmod-nf-nathelper-rtsp:
-# both modules + autoload, no userspace parts.
+# OpenWrt package for the FCC netfilter NAT helper.
 #
 # This file IS the OpenWrt package Makefile and lives at the project root,
 # so the OpenWrt tree symlinks the whole project as one package:
@@ -65,19 +63,8 @@ define KernelPackage/nf-nathelper-fcc
 endef
 
 define KernelPackage/nf-nathelper-fcc/description
- Kernel conntrack/NAT helpers for IPTV Fast Channel Change signaling
- (Huawei and Telecom variants).  Rewrites the client address/ports
- embedded in FCC requests and opens the unicast RTP media channel
- through NAT.
-
- Modules autoload at boot.  Helper assignment is integrated with fw4
- like the other well-known protocols (rtsp/sip/tftp): the postinst
- script appends an "fcc" section to /usr/share/firewall4/helpers, so
- the ct helper object and the dport-8027 assignment rule are rendered
- automatically.  The FCC port is changed by appending "port=<n>" to
- the nf_conntrack_fcc line in /etc/modules.d/45-nf-nathelper-fcc
- (default 8027; the helper name is "fcc" for the default port,
- "fcc-<n>" otherwise).
+ Conntrack and NAT helpers for IPTV Fast Channel Change protocol
+ (Huawei and Telecom variants).
 endef
 
 # Explicit list: the source dir also holds build artifacts.
@@ -91,19 +78,26 @@ define Build/Compile
 	$(KERNEL_MAKE) M="$(PKG_BUILD_DIR)" modules
 endef
 
-# Merge the fcc helper into fw4's helper database (idempotent), accept
-# helper-expected media in the forward chain via an nftables include,
-# then have fw4 re-render so everything appears without a reboot.
-# Helper rendering is gated on the module being loaded, so a missing
-# module simply hides the rules instead of breaking the firewall.
+# Register the fcc helper in fw4's helper database and accept
+# helper-expected media in the forward chain. postinst must be
+# IPKG_INSTROOT-aware: at image build time OpenWrt runs it against the
+# rootfs staging dir, so the helper section is baked into the image;
+# modprobe/firewall reload only run on the device. prerm removes the
+# section again by name (apk del only deletes files the package owns,
+# the appended block would otherwise survive uninstall). Helper
+# rendering is gated on the module being loaded, so a missing module
+# simply hides the rules instead of breaking the firewall.
 define Package/kmod-nf-nathelper-fcc/postinst
 #!/bin/sh
-[ -d /usr/share/firewall4 ] || exit 0
+HELPERS="$$IPKG_INSTROOT/usr/share/firewall4/helpers"
+[ -f "$$HELPERS" ] || exit 0
 
-# helper database section
-if [ -f /usr/share/firewall4/helpers ] && \
-   ! grep -q "option name 'fcc'" /usr/share/firewall4/helpers; then
-    cat >> /usr/share/firewall4/helpers <<'EOF'
+if ! grep -q "option name 'fcc'" "$$HELPERS"; then
+	# exactly one blank line between sections: strip trailing blank
+	# lines, make sure the file ends with a newline, then append
+	while [ -z "$$(tail -n 1 "$$HELPERS")" ]; do sed -i '$$d' "$$HELPERS"; done
+	[ -n "$$(tail -c 1 "$$HELPERS")" ] && echo >> "$$HELPERS"
+	cat >> "$$HELPERS" <<'EOF'
 
 config helper
 	option name 'fcc'
@@ -115,8 +109,25 @@ config helper
 EOF
 fi
 
-modprobe nf_conntrack_fcc 2>/dev/null
-/etc/init.d/firewall reload >/dev/null 2>&1 &
+if [ -z "$$IPKG_INSTROOT" ]; then
+	modprobe nf_conntrack_fcc 2>/dev/null
+	/etc/init.d/firewall reload >/dev/null 2>&1 &
+fi
+exit 0
+endef
+
+define Package/kmod-nf-nathelper-fcc/prerm
+#!/bin/sh
+[ -n "$$IPKG_INSTROOT" ] && exit 0
+
+HELPERS="/usr/share/firewall4/helpers"
+if [ -f "$$HELPERS" ] && grep -q "option name 'fcc'" "$$HELPERS"; then
+	sed -i '/./{H;$$!d};x;/option name .fcc./d' "$$HELPERS"
+	# do not leave a trailing blank line behind
+	while [ -z "$$(tail -n 1 "$$HELPERS")" ]; do sed -i '$$d' "$$HELPERS"; done
+	sed -i '1{/^$/d}' "$$HELPERS"
+	/etc/init.d/firewall reload >/dev/null 2>&1
+fi
 exit 0
 endef
 
